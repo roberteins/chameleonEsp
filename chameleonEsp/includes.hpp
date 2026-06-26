@@ -1,7 +1,12 @@
 #define _CRT_SECURE_NO_WARNINGS
 
+#if defined(__MINGW32__) && !defined(_MSC_VER)
+#include <windows.h>
+#include <tlhelp32.h>
+#else
 #include <Windows.h>
 #include <tlhelp32.h>
+#endif
 #include <atomic>
 #include <iostream>
 #include <vector>
@@ -11,9 +16,27 @@
 #include <functional>
 #include <mutex>
 #include <direct.h>
+#if defined(__MINGW32__) && !defined(_MSC_VER)
+#include <psapi.h>
+#include <shlobj.h>
+#else
 #include <Psapi.h>
+#include <ShlObj.h>
+#endif
 #include <d3d12.h>
 #include <dxgi1_5.h>
+#include <cerrno>
+#include <cstdio>
+
+#if defined(__MINGW32__) && !defined(_MSC_VER)
+inline errno_t fopen_s(FILE** file, const char* filename, const char* mode)
+{
+    if (!file)
+        return EINVAL;
+    *file = std::fopen(filename, mode);
+    return *file ? 0 : errno;
+}
+#endif
 
 #pragma comment(lib, "dxgi.lib")
 
@@ -39,6 +62,7 @@
 #include "Menu.hpp"
 #include "Settings.hpp"
 #include "Drawings.hpp"
+#include "Compatibility.hpp"
 
 // Set by the GatherGuard in hkProcessEvent for the duration of CheatManager::Init(). Init's many SDK
 // calls - the world reads and the inline game-state mutations - internally call UObject::ProcessEvent,

@@ -1,7 +1,5 @@
 #include "includes.hpp"
 
-#define ConfigFile ("C:\\chameleonEsp\\settings.ini")
-
 void Settings::InitializeSettings()
 {
 	this->bMenuOpen = false;
@@ -31,8 +29,8 @@ void Settings::InitializeSettings()
 
 void Settings::SaveSettings()
 {
-	_mkdir("C:\\chameleonEsp");
-	fopen_s(&file, ConfigFile, "wb");
+	ChameleonCompat::EnsureDirectory(ChameleonCompat::GetConfigDir());
+	file = std::fopen(ChameleonCompat::GetSettingsPath().c_str(), "wb");
 	if (file) {
 		// bDumpBones is a transient runtime command, not a persisted setting - write it as
 		// its inert default so a saved config can't carry a pending bone dump.
@@ -46,7 +44,7 @@ void Settings::SaveSettings()
 
 void Settings::LoadSettings()
 {
-	fopen_s(&file, ConfigFile, "rb");
+	file = std::fopen(ChameleonCompat::GetSettingsPath().c_str(), "rb");
 	if (file) {
 		fseek(file, 0, SEEK_END);
 		auto size = ftell(file);
