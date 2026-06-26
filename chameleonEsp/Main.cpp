@@ -1,8 +1,8 @@
 #include "includes.hpp"
 
-#if defined _M_X64
+#if defined(_M_X64) || defined(__x86_64__)
 typedef uint64_t uintx_t;
-#elif defined _M_IX86
+#elif defined(_M_IX86) || defined(__i386__)
 typedef uint32_t uintx_t;
 #endif
 
@@ -31,7 +31,12 @@ namespace Process {
 static bool IsGameWindowFocused()
 {
     const HWND fg = GetForegroundWindow();
-    return fg && Process::Hwnd && (fg == Process::Hwnd || IsChild(Process::Hwnd, fg));
+    if (!fg || !Process::Hwnd)
+    {
+        ChameleonCompat::Log("focus check unavailable fg=%p hwnd=%p last_error=%lu", fg, Process::Hwnd, GetLastError());
+        return false;
+    }
+    return fg == Process::Hwnd || IsChild(Process::Hwnd, fg);
 }
 
 namespace DirectX12Interface {
@@ -103,11 +108,22 @@ static DWORD FindGameThreadId()
         reinterpret_cast<PFN_GetThreadDescription>(
             GetProcAddress(GetModuleHandleW(L"kernel32.dll"), "GetThreadDescription"));
     if (!pGetThreadDescription)
+    {
+        static bool logged = false;
+        if (!logged)
+        {
+            ChameleonCompat::Log("GetThreadDescription unavailable; ESP scan stays disabled until GameThread can be positively identified");
+            logged = true;
+        }
         return 0;
+    }
 
     HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
     if (snapshot == INVALID_HANDLE_VALUE)
+    {
+        ChameleonCompat::LogLastError("CreateToolhelp32Snapshot(threads)");
         return 0;
+    }
 
     const DWORD pid = GetCurrentProcessId();
     DWORD foundTid = 0;
@@ -254,7 +270,7 @@ HRESULT __stdcall hkPresent(IDXGISwapChain3* pSwapChain, UINT SyncInterval, UINT
     if (g_GameThreadId == 0)
     {
         DWORD gameTid = FindGameThreadId();
-        std::cout << "[hkPresent] Game thread TID: " << gameTid << std::endl;
+        ChameleonCompat::Log("Game thread lookup TID=%lu", gameTid);
         if (gameTid != 0)
         {
             DWORD expected = 0;
@@ -263,8 +279,12 @@ HRESULT __stdcall hkPresent(IDXGISwapChain3* pSwapChain, UINT SyncInterval, UINT
     }
 
     if (!bRunning) return oPresent(pSwapChain, SyncInterval, Flags);
+    if (!pSwapChain || !oPresent)
+        return oPresent ? oPresent(pSwapChain, SyncInterval, Flags) : E_FAIL;
     if (!init) {
-        if (SUCCEEDED(pSwapChain->GetDevice(__uuidof(ID3D12Device), (void**)&DirectX12Interface::Device))) {
+        HRESULT deviceHr = pSwapChain->GetDevice(__uuidof(ID3D12Device), (void**)&DirectX12Interface::Device);
+        if (SUCCEEDED(deviceHr) && DirectX12Interface::Device) {
+            ChameleonCompat::Log("D3D12 device discovery succeeded swapchain=%p device=%p", pSwapChain, DirectX12Interface::Device);
             ImGui::CreateContext();
 
             ImGuiIO& io = ImGui::GetIO(); (void)io;
@@ -282,16 +302,38 @@ HRESULT __stdcall hkPresent(IDXGISwapChain3* pSwapChain, UINT SyncInterval, UINT
                 cfg.OversampleH = 1;
                 cfg.OversampleV = 1;
 
-                if (io.Fonts->AddFontFromFileTTF("C:\\Windows\\Fonts\\segoeui.ttf", 15.0f, &cfg, io.Fonts->GetGlyphRangesDefault()))
+                const char* baseFonts[] = {
+                    "C:\\Windows\\Fonts\\segoeui.ttf",
+                    "Z:\\usr\\share\\fonts\\truetype\\dejavu\\DejaVuSans.ttf",
+                    "Z:\\usr\\share\\fonts\\truetype\\liberation2\\LiberationSans-Regular.ttf",
+                };
+                ImFont* baseFont = nullptr;
+                const char* selectedFont = nullptr;
+                for (const char* font : baseFonts)
                 {
+                    baseFont = io.Fonts->AddFontFromFileTTF(font, 15.0f, &cfg, io.Fonts->GetGlyphRangesDefault());
+                    if (baseFont)
+                    {
+                        selectedFont = font;
+                        break;
+                    }
+                }
+                if (baseFont)
+                {
+                    ChameleonCompat::Log("Loaded ImGui font: %s", selectedFont);
                     cfg.MergeMode = true;
-                    io.Fonts->AddFontFromFileTTF("C:\\Windows\\Fonts\\segoeui.ttf", 15.0f, &cfg, io.Fonts->GetGlyphRangesCyrillic());
-                    io.Fonts->AddFontFromFileTTF("C:\\Windows\\Fonts\\segoeui.ttf", 15.0f, &cfg, io.Fonts->GetGlyphRangesGreek());
+                    io.Fonts->AddFontFromFileTTF(selectedFont, 15.0f, &cfg, io.Fonts->GetGlyphRangesCyrillic());
+                    io.Fonts->AddFontFromFileTTF(selectedFont, 15.0f, &cfg, io.Fonts->GetGlyphRangesGreek());
                     static const ImWchar arabic_ranges[] = { 0x0600, 0x06FF, 0xFB50, 0xFDFF, 0xFE70, 0xFEFF, 0 };
-                    io.Fonts->AddFontFromFileTTF("C:\\Windows\\Fonts\\segoeui.ttf", 15.0f, &cfg, arabic_ranges);
+                    io.Fonts->AddFontFromFileTTF(selectedFont, 15.0f, &cfg, arabic_ranges);
                     io.Fonts->AddFontFromFileTTF("C:\\Windows\\Fonts\\msyh.ttc",    15.0f, &cfg, io.Fonts->GetGlyphRangesChineseSimplifiedCommon());
                     io.Fonts->AddFontFromFileTTF("C:\\Windows\\Fonts\\meiryo.ttc",  15.0f, &cfg, io.Fonts->GetGlyphRangesJapanese());
                     io.Fonts->AddFontFromFileTTF("C:\\Windows\\Fonts\\malgun.ttf",  15.0f, &cfg, io.Fonts->GetGlyphRangesKorean());
+                }
+                else
+                {
+                    io.Fonts->AddFontDefault();
+                    ChameleonCompat::Log("No external ImGui font found; using default font");
                 }
             }
 
@@ -371,12 +413,16 @@ HRESULT __stdcall hkPresent(IDXGISwapChain3* pSwapChain, UINT SyncInterval, UINT
             // the original game proc. Hooking again would overwrite it with our own hook,
             // causing CallWindowProc -> WndProc -> CallWindowProc infinite recursion.
             if (!Process::WndProc)
-                Process::WndProc = (WNDPROC)SetWindowLongPtr(Process::Hwnd, GWLP_WNDPROC, (__int3264)(LONG_PTR)WndProc);
+                Process::WndProc = (WNDPROC)SetWindowLongPtr(Process::Hwnd, GWLP_WNDPROC, (LONG_PTR)WndProc);
 
             // Mark initialized only after every resource above was created - any failed step
             // returns early and leaves init false, so the next frame retries cleanly instead
             // of falling through to the render path with null D3D state.
             init = true;
+        }
+        else
+        {
+            ChameleonCompat::LogHResult("IDXGISwapChain::GetDevice", deviceHr);
         }
     }
 
@@ -387,7 +433,7 @@ HRESULT __stdcall hkPresent(IDXGISwapChain3* pSwapChain, UINT SyncInterval, UINT
 
     if (DirectX12Interface::CommandQueue == nullptr)
     {
-		std::cout << "CommandQueue is nullptr!" << std::endl;
+		ChameleonCompat::Log("CommandQueue is nullptr; skipping overlay render this frame");
         return oPresent(pSwapChain, SyncInterval, Flags);
     }
 
@@ -421,7 +467,7 @@ HRESULT __stdcall hkPresent(IDXGISwapChain3* pSwapChain, UINT SyncInterval, UINT
     ImGui::PopStyleColor();
     ImGui::PopStyleVar(2);
 
-    if ((GetAsyncKeyState(VK_INSERT) & 1) && IsGameWindowFocused())
+    if ((GetAsyncKeyState(VK_INSERT) & 1) && IsGameWindowFocused() && !ImGui::GetIO().WantTextInput)
         cfg->bMenuOpen = !cfg->bMenuOpen;
 
     ImGui::GetIO().MouseDrawCursor = cfg->bMenuOpen;
@@ -434,7 +480,27 @@ HRESULT __stdcall hkPresent(IDXGISwapChain3* pSwapChain, UINT SyncInterval, UINT
 
     ImGui::EndFrame();
 
-    DirectX12Interface::_FrameContext& CurrentFrameContext = DirectX12Interface::FrameContext[pSwapChain->GetCurrentBackBufferIndex()];
+    if (!DirectX12Interface::FrameContext || !DirectX12Interface::Fence || !DirectX12Interface::FenceEvent ||
+        !DirectX12Interface::CommandList || !DirectX12Interface::DescriptorHeapImGuiRender)
+    {
+        ChameleonCompat::Log("D3D12 render state incomplete; disabling overlay until reinit");
+        init = false;
+        return oPresent(pSwapChain, SyncInterval, Flags);
+    }
+
+    const UINT backBufferIndex = pSwapChain->GetCurrentBackBufferIndex();
+    if (backBufferIndex >= DirectX12Interface::BuffersCounts)
+    {
+        ChameleonCompat::Log("Invalid back buffer index %u count=%llu", backBufferIndex, static_cast<unsigned long long>(DirectX12Interface::BuffersCounts));
+        return oPresent(pSwapChain, SyncInterval, Flags);
+    }
+
+    DirectX12Interface::_FrameContext& CurrentFrameContext = DirectX12Interface::FrameContext[backBufferIndex];
+    if (!CurrentFrameContext.CommandAllocator || !CurrentFrameContext.Resource)
+    {
+        ChameleonCompat::Log("Frame context incomplete allocator=%p resource=%p", CurrentFrameContext.CommandAllocator, CurrentFrameContext.Resource);
+        return oPresent(pSwapChain, SyncInterval, Flags);
+    }
 
     // Wait for the GPU to finish the last frame that used this context's allocator before
     // resetting it — resetting an allocator with in-flight commands is undefined behaviour.
@@ -445,7 +511,12 @@ HRESULT __stdcall hkPresent(IDXGISwapChain3* pSwapChain, UINT SyncInterval, UINT
         WaitForSingleObject(DirectX12Interface::FenceEvent, 2000);
     }
 
-    CurrentFrameContext.CommandAllocator->Reset();
+    HRESULT resetAllocatorHr = CurrentFrameContext.CommandAllocator->Reset();
+    if (FAILED(resetAllocatorHr))
+    {
+        ChameleonCompat::LogHResult("ID3D12CommandAllocator::Reset", resetAllocatorHr);
+        return oPresent(pSwapChain, SyncInterval, Flags);
+    }
 
     D3D12_RESOURCE_BARRIER Barrier;
     Barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
@@ -455,7 +526,12 @@ HRESULT __stdcall hkPresent(IDXGISwapChain3* pSwapChain, UINT SyncInterval, UINT
     Barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_PRESENT;
     Barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_RENDER_TARGET;
 
-    DirectX12Interface::CommandList->Reset(CurrentFrameContext.CommandAllocator, nullptr);
+    HRESULT resetListHr = DirectX12Interface::CommandList->Reset(CurrentFrameContext.CommandAllocator, nullptr);
+    if (FAILED(resetListHr))
+    {
+        ChameleonCompat::LogHResult("ID3D12GraphicsCommandList::Reset", resetListHr);
+        return oPresent(pSwapChain, SyncInterval, Flags);
+    }
     DirectX12Interface::CommandList->ResourceBarrier(1, &Barrier);
     DirectX12Interface::CommandList->OMSetRenderTargets(1, &CurrentFrameContext.DescriptorHandle, FALSE, nullptr);
     DirectX12Interface::CommandList->SetDescriptorHeaps(1, &DirectX12Interface::DescriptorHeapImGuiRender);
@@ -465,13 +541,23 @@ HRESULT __stdcall hkPresent(IDXGISwapChain3* pSwapChain, UINT SyncInterval, UINT
     Barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_RENDER_TARGET;
     Barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_PRESENT;
     DirectX12Interface::CommandList->ResourceBarrier(1, &Barrier);
-    DirectX12Interface::CommandList->Close();
+    HRESULT closeListHr = DirectX12Interface::CommandList->Close();
+    if (FAILED(closeListHr))
+    {
+        ChameleonCompat::LogHResult("ID3D12GraphicsCommandList::Close", closeListHr);
+        return oPresent(pSwapChain, SyncInterval, Flags);
+    }
     DirectX12Interface::CommandQueue->ExecuteCommandLists(1, reinterpret_cast<ID3D12CommandList* const*>(&DirectX12Interface::CommandList));
 
     // Signal the fence on the queue and record the value for this frame context, so next time
     // we cycle back to it we know when the GPU has finished this frame's commands.
     const UINT64 signalValue = ++DirectX12Interface::FenceLastSignaledValue;
-    DirectX12Interface::CommandQueue->Signal(DirectX12Interface::Fence, signalValue);
+    HRESULT signalHr = DirectX12Interface::CommandQueue->Signal(DirectX12Interface::Fence, signalValue);
+    if (FAILED(signalHr))
+    {
+        ChameleonCompat::LogHResult("ID3D12CommandQueue::Signal", signalHr);
+        return oPresent(pSwapChain, SyncInterval, Flags);
+    }
     CurrentFrameContext.FenceValue = signalValue;
 
     return oPresent(pSwapChain, SyncInterval, Flags);
@@ -499,7 +585,10 @@ void __stdcall hkExecuteCommandLists(ID3D12CommandQueue* queue, UINT NumCommandL
         }
 
         if (sameDevice)
+        {
             DirectX12Interface::CommandQueue = queue;
+            ChameleonCompat::Log("Captured D3D12 command queue=%p", queue);
+        }
     }
 
     return oExecuteCommandLists(queue, NumCommandLists, ppCommandLists);
@@ -592,7 +681,7 @@ void Unload()
     // Restore the original WndProc before this module is unmapped, otherwise the window
     // keeps a dangling pointer into our WndProc and crashes on the next message.
     if (Process::WndProc)
-        SetWindowLongPtr(Process::Hwnd, GWLP_WNDPROC, (__int3264)(LONG_PTR)Process::WndProc);
+        SetWindowLongPtr(Process::Hwnd, GWLP_WNDPROC, (LONG_PTR)Process::WndProc);
 
     // MinHook
 	MH_DisableHook(MH_ALL_HOOKS);
@@ -663,6 +752,7 @@ void Unload()
     freopen_s(&Dummy, "NUL", "w", stdout);
     freopen_s(&Dummy, "NUL", "r", stdin);
     FreeConsole();
+    ChameleonCompat::CloseLog();
 }
 
 void InitProcess(bool *WindowFocus)
@@ -692,7 +782,8 @@ DWORD MainThread(HMODULE Module)
     freopen_s(&Dummy, "CONOUT$", "w", stdout);
     freopen_s(&Dummy, "CONIN$", "r", stdin);
 
-    _mkdir("C:\\chameleonEsp");
+    ChameleonCompat::InitLog(Module);
+    ChameleonCompat::EnsureDirectory(ChameleonCompat::GetConfigDir());
 
 	// Initialize global instances
     cfg = new Settings();
@@ -719,7 +810,7 @@ DWORD MainThread(HMODULE Module)
 
 	if (MH_Initialize() != MH_OK)
 	{
-		std::cout << "Failed to initialize MinHook!" << std::endl;
+		ChameleonCompat::Log("Failed to initialize MinHook");
 		return 1;
 	}
     
@@ -728,7 +819,7 @@ DWORD MainThread(HMODULE Module)
     {
         auto err = kiero::locate<kiero::Implementation_D3D12>(nullptr, &d3d12);
         if (err == kiero::Error_Nil) {
-			std::cout << "DirectX 12 interface located!" << std::endl;
+			ChameleonCompat::Log("DirectX 12 interface located");
             break;
         }
         Sleep(100);
@@ -737,25 +828,27 @@ DWORD MainThread(HMODULE Module)
     void* tExecuteCommandLists = d3d12.command_queue_methods[10];
     void* tPresent = d3d12.swapchain_methods[8];
     void* tResizeBuffers = d3d12.swapchain_methods[13];
+    ChameleonCompat::Log("D3D12 method addresses ExecuteCommandLists[10]=%p Present[8]=%p ResizeBuffers[13]=%p", tExecuteCommandLists, tPresent, tResizeBuffers);
 
     if (MH_CreateHook(tExecuteCommandLists, hkExecuteCommandLists, (LPVOID*)&oExecuteCommandLists) != MH_OK) {
-        std::cout << "Failed to hook ExecuteCommandLists!" << std::endl;
+        ChameleonCompat::Log("Failed to hook ExecuteCommandLists");
     }
 
     if (MH_CreateHook(tPresent, hkPresent, (LPVOID*)&oPresent) != MH_OK) {
-        std::cout << "Failed to hook Present!" << std::endl;
+        ChameleonCompat::Log("Failed to hook Present");
     }
 
     if (MH_CreateHook(tResizeBuffers, hkResizeBuffers, (LPVOID*)&oResizeBuffers) != MH_OK) {
-        std::cout << "Failed to hook ResizeBuffers!" << std::endl;
+        ChameleonCompat::Log("Failed to hook ResizeBuffers");
     }
 
     void* tProcessEvent = reinterpret_cast<void*>(SDK::InSDKUtils::GetImageBase() + SDK::Offsets::ProcessEvent);
     if (MH_CreateHook(tProcessEvent, hkProcessEvent, (LPVOID*)&oProcessEvent) != MH_OK) {
-        std::cout << "Failed to hook ProcessEvent!" << std::endl;
+        ChameleonCompat::Log("Failed to hook ProcessEvent");
     }
 
-    MH_EnableHook(MH_ALL_HOOKS);
+    MH_STATUS enableStatus = MH_EnableHook(MH_ALL_HOOKS);
+    ChameleonCompat::Log("MH_EnableHook status=%d ProcessEvent=%p", enableStatus, tProcessEvent);
 
 	// poll for the END key to be pressed to unload the DLL
     while (bRunning)

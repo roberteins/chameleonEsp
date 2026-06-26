@@ -12,8 +12,21 @@
 #include <mutex>
 #include <direct.h>
 #include <Psapi.h>
+#include <ShlObj.h>
 #include <d3d12.h>
 #include <dxgi1_5.h>
+#include <cerrno>
+#include <cstdio>
+
+#if defined(__MINGW32__) && !defined(_MSC_VER)
+inline errno_t fopen_s(FILE** file, const char* filename, const char* mode)
+{
+    if (!file)
+        return EINVAL;
+    *file = std::fopen(filename, mode);
+    return *file ? 0 : errno;
+}
+#endif
 
 #pragma comment(lib, "dxgi.lib")
 
@@ -39,6 +52,7 @@
 #include "Menu.hpp"
 #include "Settings.hpp"
 #include "Drawings.hpp"
+#include "Compatibility.hpp"
 
 // Set by the GatherGuard in hkProcessEvent for the duration of CheatManager::Init(). Init's many SDK
 // calls - the world reads and the inline game-state mutations - internally call UObject::ProcessEvent,
