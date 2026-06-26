@@ -1,6 +1,10 @@
 #pragma once
 
+#if defined(__MINGW32__) && !defined(_MSC_VER)
+#include <windows.h>
+#else
 #include <Windows.h>
+#endif
 #include <string>
 
 namespace ChameleonCompat

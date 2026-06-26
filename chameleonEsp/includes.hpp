@@ -1,7 +1,12 @@
 #define _CRT_SECURE_NO_WARNINGS
 
+#if defined(__MINGW32__) && !defined(_MSC_VER)
+#include <windows.h>
+#include <tlhelp32.h>
+#else
 #include <Windows.h>
 #include <tlhelp32.h>
+#endif
 #include <atomic>
 #include <iostream>
 #include <vector>
@@ -11,8 +16,13 @@
 #include <functional>
 #include <mutex>
 #include <direct.h>
+#if defined(__MINGW32__) && !defined(_MSC_VER)
+#include <psapi.h>
+#include <shlobj.h>
+#else
 #include <Psapi.h>
 #include <ShlObj.h>
+#endif
 #include <d3d12.h>
 #include <dxgi1_5.h>
 #include <cerrno>

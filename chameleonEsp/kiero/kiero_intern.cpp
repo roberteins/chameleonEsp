@@ -1,5 +1,9 @@
 #define KIERO_ON_WINDOWS
+#if defined(__MINGW32__) && !defined(_MSC_VER)
+#include <windows.h>
+#else
 #include <Windows.h>
+#endif
 
 #include "kiero_intern.hpp"
 

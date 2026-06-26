@@ -39,7 +39,7 @@ if(MINGW)
     target_link_options(chameleonEsp PRIVATE -static-libgcc -static-libstdc++ -Wl,--enable-stdcall-fixup)
 endif()
 
-target_link_libraries(chameleonEsp PRIVATE d3d12 dxgi dxguid psapi user32 gdi32 shell32)
+target_link_libraries(chameleonEsp PRIVATE d3d12 dxgi dxguid d3dcompiler psapi user32 gdi32 shell32)
 set_target_properties(chameleonEsp PROPERTIES
     OUTPUT_NAME chameleonEsp
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
